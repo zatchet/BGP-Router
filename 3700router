@@ -37,8 +37,7 @@ class Router:
     def handleMsg(self, msg):
         match msg.type:
             case 'update':
-                pass
-                #self.routingTable.append({})
+                self.addRoutingEntry(msg.msg.network, msg.msg.netmask, [14] + msg.msg.ASPath)
             case 'data':
                 print('i am data')
             case 'dump':
@@ -57,7 +56,6 @@ class Router:
                 msg = k.decode('utf-8')
                 # from https://stackoverflow.com/questions/6578986/how-to-convert-json-data-into-a-python-object
                 obj = json.loads(msg, object_hook=lambda d: SimpleNamespace(**d))
-                #print(f'json deserialized object type: {js}')
                 self.handleMsg(obj)
                 #print("Received message '%s' from %s" % (msg, srcif))
 
