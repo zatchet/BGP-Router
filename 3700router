@@ -41,15 +41,16 @@ class Router:
             'selfOrigin' : selfOrigin,
             'origin' : origin})
 
-    def handleMsg(self, msg):
+    def handleMsg(self, obj):
         print('handling msg: ')
-        print(msg)
-        match msg.type:
+        print(obj)
+        match obj.type:
             case 'update':
                 # 1 - save a copy
 
                 # 2 - add to routing table
-                self.addRoutingEntry(msg.msg.network, msg.msg.netmask, msg.msg.ASPath)
+                self.addRoutingEntry(obj.msg.network, obj.msg.netmask, obj.msg.ASPath, 
+                obj.src, obj.msg.localpref, obj.msg.selfOrigin, obj.msg.origin)
 
                 # 3 - send copies to approproate neighbors
             case 'data':
