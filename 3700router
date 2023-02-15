@@ -31,13 +31,25 @@ class Router:
     def send(self, network, message):
         self.sockets[network].sendto(message.encode('utf-8'), ('localhost', self.ports[network]))
 
-    def addRoutingEntry(self, network, netmask, ASPath):
-        self.routingTable.append({"network": network, "netmask": netmask, "ASPath": ASPath})
+    def addRoutingEntry(self, network, netmask, ASPath, peer, localpref, selfOrigin, origin):
+        self.routingTable.append({
+            'network': network, 
+            'netmask': netmask, 
+            'ASPath': ASPath,
+            'peer' : peer,
+            'localpref' : localpref,
+            'selfOrigin' : selfOrigin,
+            'origin' : origin})
 
     def handleMsg(self, msg):
         match msg.type:
             case 'update':
+                # 1 - save a copy
+
+                # 2 - add to routing table
                 self.addRoutingEntry(msg.msg.network, msg.msg.netmask, [14] + msg.msg.ASPath)
+
+                # 3 - send copies to approproate neighbors
             case 'data':
                 print('i am data')
             case 'dump':
