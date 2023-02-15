@@ -46,12 +46,34 @@ class Router:
         print('relations-------------------')
         print(self.relations)
     
-    def sendUpdates(self, obj):
-        match self.relations[obj['src']]:
+    def sendUpdates(self, obj, src):
+
+        print('updte msg-----------------------------------')
+        print(obj)
+
+        del obj['localpref']
+        del obj['origin']
+        del obj['selfOrigin']
+        obj['ASPath'].insert(0, self.asn)
+        
+        print('after modifying-----------------------------------')
+        print(obj)
+
+        match self.relations[src]:
             case 'cust':
                 # send to all neighbors
                 for neighbor in self.sockets.keys():
-                    self.send(neighbor, json.dumps(obj))
+                    if neighbor == src:
+                        # don't send the update back to itself
+                        continue
+                    print(f'!!!!!!!!!!!!!!!!!!!!!!!sending update to neighbor: {neighbor}')
+                    print(neighbor)
+                    self.send(neighbor, json.dumps({
+                        'type': 'update', 
+                        'src': self.our_addr(neighbor), 
+                        'dst': neighbor, 
+                        'msg': obj}))
+
             case 'prov' | 'peer':
                 # send to only customers
                 pass
@@ -62,6 +84,7 @@ class Router:
         print(obj)
         match obj['type']:
             case 'update':
+                print('?????????????????? recieved an update from a router')
                 # 1 - save a copy
 
                 # 2 - add to routing table
@@ -69,7 +92,7 @@ class Router:
                 obj['src'], obj['msg']['localpref'], obj['msg']['selfOrigin'], obj['msg']['origin'])
 
                 # 3 - send copies to approproate neighbors
-                self.sendUpdates(obj)
+                self.sendUpdates(obj['msg'], obj['src'])
             case 'data':
                 print('i am data')
             case 'dump':
@@ -88,6 +111,7 @@ class Router:
                 msg = k.decode('utf-8')
                 # from https://stackoverflow.com/questions/6578986/how-to-convert-json-data-into-a-python-object
                 obj = json.loads(msg)
+                print(obj)
                 self.handleMsg(obj)
                 #print("Received message '%s' from %s" % (msg, srcif))
 
