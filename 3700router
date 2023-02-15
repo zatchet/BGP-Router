@@ -47,7 +47,7 @@ class Router:
         print(self.relations)
     
     def sendUpdates(self, obj):
-        match self.relations[obj.src]:
+        match self.relations[obj['src']]:
             case 'cust':
                 # send to all neighbors
                 for neighbor in self.sockets.keys():
@@ -60,17 +60,16 @@ class Router:
     def handleMsg(self, obj):
         print('handling msg: ')
         print(obj)
-        match obj.type:
+        match obj['type']:
             case 'update':
                 # 1 - save a copy
 
                 # 2 - add to routing table
-                self.addRoutingEntry(obj.msg.network, obj.msg.netmask, obj.msg.ASPath, 
-                obj.src, obj.msg.localpref, obj.msg.selfOrigin, obj.msg.origin)
+                self.addRoutingEntry(obj['msg']['network'], obj['msg']['netmask'], obj['msg']['ASPath'], 
+                obj['src'], obj['msg']['localpref'], obj['msg']['selfOrigin'], obj['msg']['origin'])
 
                 # 3 - send copies to approproate neighbors
                 self.sendUpdates(obj)
-
             case 'data':
                 print('i am data')
             case 'dump':
@@ -88,7 +87,7 @@ class Router:
                         break
                 msg = k.decode('utf-8')
                 # from https://stackoverflow.com/questions/6578986/how-to-convert-json-data-into-a-python-object
-                obj = json.loads(msg, object_hook=lambda d: SimpleNamespace(**d))
+                obj = json.loads(msg)
                 self.handleMsg(obj)
                 #print("Received message '%s' from %s" % (msg, srcif))
 
