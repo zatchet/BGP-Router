@@ -120,7 +120,7 @@ class Router:
             dstRouter = self.getRouterFromIp(obj['dst'])
             print(self.relations)
 
-            # TODO figure out how to derive source/dest router from source/dest ips
+            # TODO figure out how to derive source/dest router from source/dest ips so we can ensure legality
             if True: #self.relations[srcRouter] == 'cust' or self.relations[dstRouter] == 'cust':
                 print('i\'m sending data woooooooooooooooooo')
                 self.send(match['peer'], json.dumps(obj))
