@@ -1,7 +1,6 @@
 #!/usr/bin/env -S python3 -u
 
 import argparse, socket, time, json, select, struct, sys, math, select
-from types import SimpleNamespace
 
 class Router:
 
@@ -9,7 +8,6 @@ class Router:
     sockets = {}
     ports = {}
     routingTable = []
-
 
     def __init__(self, asn, connections):
         print("Router at AS %s starting up" % asn)
@@ -54,7 +52,7 @@ class Router:
         del obj['localpref']
         del obj['origin']
         del obj['selfOrigin']
-        obj['ASPath'].insert(0, self.asn)
+        obj['ASPath'] = [self.asn] + obj['ASPath']
         
         print('after modifying-----------------------------------')
         print(obj)
@@ -73,30 +71,92 @@ class Router:
                         'src': self.our_addr(neighbor), 
                         'dst': neighbor, 
                         'msg': obj}))
-
             case 'prov' | 'peer':
                 # send to only customers
                 pass
 
+    def ipToBinStr(self, ip):
+        quads = list(int(qdn) for qdn in ip.split('.'))
+        binquads = []
+        for quad in quads:
+            binquads.append(str(bin(quad)))
+            binquads[-1] = binquads[-1][2:]
+            zerosNeeded = 8 - len(binquads[-1])
+            for _ in range(zerosNeeded):
+                binquads[-1] = '0' + binquads[-1]
+        return ''.join(binquads)
+
+    def matches(self, destIp, network, netmask):
+        # https://stackoverflow.com/questions/38085571/how-use-netaddr-to-convert-subnet-mask-to-cidr-in-python
+        netmaskBits = sum(bin(int(x)).count('1') for x in netmask.split('.'))
+        return netmaskBits if self.ipToBinStr(destIp)[:netmaskBits] == self.ipToBinStr(network)[:netmaskBits] else 0
+
+    def getBestMatch(self, ip):
+        bestMatch = {}
+        bestMatchLen = 0
+
+        for entry in self.routingTable:
+            matchLen = self.matches(ip, entry['network'], entry['netmask'])
+            if matchLen > bestMatchLen:
+                bestMatchLen = matchLen
+                bestMatch = entry
+        return bestMatch if bestMatchLen > 0 else None
+
+    def getRouterFromIp(self, ip):
+        quads = list(int(qdn) for qdn in ip.split('.'))
+        quads[3] = int(str(quads[3])[0])
+        return "%d.%d.%d.%d" % (quads[0], quads[1], quads[2], quads[3])
+
+    def handleDataMsg(self, obj):
+        print('data obj--------------------------')
+        print(obj)
+        match = self.getBestMatch(obj['dst'])
+        if match is None:
+            pass
+            # TODO send a no route message back
+        else:
+            # ensure legality\
+            srcRouter = self.getRouterFromIp(obj['src'])
+            dstRouter = self.getRouterFromIp(obj['dst'])
+            print(self.relations)
+
+            # TODO figure out how to derive source/dest router from source/dest ips
+            if True: #self.relations[srcRouter] == 'cust' or self.relations[dstRouter] == 'cust':
+                print('i\'m sending data woooooooooooooooooo')
+                self.send(match['peer'], json.dumps(obj))
+            else:
+                pass
+                # not making money, so drop!
+                # TODO send a no route message back
+    
+    def handleUpdateMsg(self, obj):
+        print('?????????????????? recieved an update from a router')
+        # 1 TODO save a copy
+        # 2 - add to routing table
+        self.addRoutingEntry(obj['msg']['network'], obj['msg']['netmask'], obj['msg']['ASPath'], 
+        obj['src'], obj['msg']['localpref'], obj['msg']['selfOrigin'], obj['msg']['origin'])
+        # 3 - send copies to approproate neighbors
+        self.sendUpdates(obj['msg'], obj['src'])
+
+    def handleDumpMsg(self, obj):
+        print('dump msg: [[[[[[[[[[[[[[]]]]]]]]]]]]]]')
+        print(obj)
+        self.send(obj['src'], json.dumps({
+            'type': 'table',
+            'src': obj['dst'],
+            'dst': obj['src'],
+            'msg': self.routingTable}))
 
     def handleMsg(self, obj):
         print('handling msg: ')
         print(obj)
         match obj['type']:
             case 'update':
-                print('?????????????????? recieved an update from a router')
-                # 1 - save a copy
-
-                # 2 - add to routing table
-                self.addRoutingEntry(obj['msg']['network'], obj['msg']['netmask'], obj['msg']['ASPath'], 
-                obj['src'], obj['msg']['localpref'], obj['msg']['selfOrigin'], obj['msg']['origin'])
-
-                # 3 - send copies to approproate neighbors
-                self.sendUpdates(obj['msg'], obj['src'])
+                self.handleUpdateMsg(obj)
             case 'data':
-                print('i am data')
+                self.handleDataMsg(obj)
             case 'dump':
-                print('i am a dump')
+                self.handleDumpMsg(obj)
     
     def run(self):
         while True:
@@ -109,7 +169,6 @@ class Router:
                         srcif = sock
                         break
                 msg = k.decode('utf-8')
-                # from https://stackoverflow.com/questions/6578986/how-to-convert-json-data-into-a-python-object
                 obj = json.loads(msg)
                 print(obj)
                 self.handleMsg(obj)
