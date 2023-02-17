@@ -75,22 +75,19 @@ class Router:
                 # send to only customers
                 pass
 
+    # converts '127.0.0.1' to '01111111000000000000000000000001', for example
     def ipToBinStr(self, ip):
         quads = list(int(qdn) for qdn in ip.split('.'))
-        binquads = []
-        for quad in quads:
-            binquads.append(str(bin(quad)))
-            binquads[-1] = binquads[-1][2:]
-            zerosNeeded = 8 - len(binquads[-1])
-            for _ in range(zerosNeeded):
-                binquads[-1] = '0' + binquads[-1]
+        binquads = [str(bin(quad))[2:].rjust(8, '0') for quad in quads]
         return ''.join(binquads)
 
+    # returns the length of the prefix match, or 0 if they don't match
     def matches(self, destIp, network, netmask):
         # https://stackoverflow.com/questions/38085571/how-use-netaddr-to-convert-subnet-mask-to-cidr-in-python
         netmaskBits = sum(bin(int(x)).count('1') for x in netmask.split('.'))
         return netmaskBits if self.ipToBinStr(destIp)[:netmaskBits] == self.ipToBinStr(network)[:netmaskBits] else 0
 
+    # TODO make this support the other tie-breaking rules
     def getBestMatch(self, ip):
         bestMatch = {}
         bestMatchLen = 0
@@ -102,6 +99,7 @@ class Router:
                 bestMatch = entry
         return bestMatch if bestMatchLen > 0 else None
 
+    # don't know if this actually works this way
     def getRouterFromIp(self, ip):
         quads = list(int(qdn) for qdn in ip.split('.'))
         quads[3] = int(str(quads[3])[0])
@@ -115,7 +113,7 @@ class Router:
             pass
             # TODO send a no route message back
         else:
-            # ensure legality\
+            # TODO ensure legality
             srcRouter = self.getRouterFromIp(obj['src'])
             dstRouter = self.getRouterFromIp(obj['dst'])
             print(self.relations)
