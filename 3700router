@@ -83,21 +83,89 @@ class Router:
 
     # returns the length of the prefix match, or 0 if they don't match
     def matches(self, destIp, network, netmask):
+        print('matches: ' + destIp, netmask, netmask)
         # https://stackoverflow.com/questions/38085571/how-use-netaddr-to-convert-subnet-mask-to-cidr-in-python
         netmaskBits = sum(bin(int(x)).count('1') for x in netmask.split('.'))
-        return netmaskBits if self.ipToBinStr(destIp)[:netmaskBits] == self.ipToBinStr(network)[:netmaskBits] else 0
+        ans = netmaskBits if self.ipToBinStr(destIp)[:netmaskBits] == self.ipToBinStr(network)[:netmaskBits] else 0
+        print(ans)
+        return ans
 
     # TODO make this support the other tie-breaking rules
     def getBestMatch(self, ip):
+
+        if '10.' in ip:
+            print('xyz')
+
         bestMatch = {}
         bestMatchLen = 0
 
+        entryDict = {}
+        
+        print(f'rlen: {len(self.routingTable)}')
+        for entry in self.routingTable:
+            print('foo')
+            entryDict[entry['peer']] = (entry, self.matches(ip, entry['network'], entry['netmask']))
+
+        print(f'elen: {len(entryDict)}')
+        
+        # filter dictionary such that it only contains entries with the maximum match length
+        print(f'matchlens : {[v[1] for v in entryDict.values()]}')
+        longestPrefMatch = max([v[1] for v in entryDict.values()])
+        filteredDict = {k:v for (k,v) in entryDict.items() if v[1] > 0 and v[1] == longestPrefMatch}
+
+        print('this is the filtered dictionary:')
+        print(filteredDict)
+
+        if len(filteredDict) == 0:
+            print(f'yoqength 0, ip: {ip}, match: {longestPrefMatch}')
+            print(self.routingTable)
+            print(f'entry len: {len(entryDict)}, routlen: {len(self.routingTable)}')
+            print(self.matches(ip, '11.0.0.0', '255.0.0.0'))
+
+#           00001011 00000000 00000000 00000000
+#           00001011 00000000 00000000 00011001
+
+            return None
+        elif len(filteredDict) == 1:
+            return list(filteredDict.keys())[0]
+        else:
+            maxLocalPref = max([v[0]['localpref'] for v in filteredDict.values()])
+            filteredDict = {k:v for (k,v) in filteredDict.items() if v[0]['localpref'] == maxLocalPref}
+            if len(filteredDict) == 1:
+                return list(filteredDict.keys())[0]
+            filteredDict = {k:v for (k,v) in filteredDict.items() if v[0]['selfOrigin'] == True}
+            if len(filteredDict) == 1:
+                return list(filteredDict.keys())[0]
+            shortestASPath = min([len(v[0]['ASPath']) for v in filteredDict.values()])
+            filteredDict = {k:v for (k,v) in filteredDict.items() if len(v[0]['ASPath']) == shortestASPath}
+            if len(filteredDict) == 1:
+                return list(filteredDict.keys())[0]
+            originWeights = {'IGP':2, 'EGP':1, 'UNK':0}
+            bestOriginWeight = max([originWeights[v[0]['origin']] for v in filteredDict.values()])
+            filteredDict = {k:v for (k,v) in filteredDict.items() if originWeights(v[0]['origin']) == bestOriginWeight}
+            if len(filteredDict) == 1:
+                return list(filteredDict.keys())[0]
+            return min(list(filteredDict.keys()))
+            
+            print('post localpref filtering-----------------------')
+            print(filteredDict)
+            
+
+        print('printing routingggggg table')
+        print(self.routingTable)
+        print('printing match lengths')
+        print(entryDict)
+        print('printing filtered match lengths')
+        print(filteredDict)
+
+        '''
         for entry in self.routingTable:
             matchLen = self.matches(ip, entry['network'], entry['netmask'])
             if matchLen > bestMatchLen:
                 bestMatchLen = matchLen
                 bestMatch = entry
         return bestMatch if bestMatchLen > 0 else None
+        '''
 
     # don't know if this actually works this way
     def getRouterFromIp(self, ip):
@@ -108,8 +176,8 @@ class Router:
     def handleDataMsg(self, obj):
         print('data obj--------------------------')
         print(obj)
-        match = self.getBestMatch(obj['dst'])
-        if match is None:
+        peer = self.getBestMatch(obj['dst'])
+        if peer is None:
             pass
             # TODO send a no route message back
         else:
@@ -121,7 +189,7 @@ class Router:
             # TODO figure out how to derive source/dest router from source/dest ips so we can ensure legality
             if True: #self.relations[srcRouter] == 'cust' or self.relations[dstRouter] == 'cust':
                 print('i\'m sending data woooooooooooooooooo')
-                self.send(match['peer'], json.dumps(obj))
+                self.send(peer, json.dumps(obj))
             else:
                 pass
                 # not making money, so drop!
