@@ -92,41 +92,17 @@ class Router:
 
     # TODO make this support the other tie-breaking rules
     def getBestMatch(self, ip):
-
-        if '10.' in ip:
-            print('xyz')
-
-        bestMatch = {}
-        bestMatchLen = 0
-
-        entryDict = {}
-        entryMatches = []
         
-        print(f'rlen: {len(self.routingTable)}')
+        entryMatches = []
+
         for entry in self.routingTable:
-            print('foo')
-            entryDict[entry['peer']] = (entry, self.matches(ip, entry['network'], entry['netmask']))
             entryMatches.append((entry, self.matches(ip, entry['network'], entry['netmask'])))
 
-        print(f'elen: {len(entryMatches)}')
-        
         # filter dictionary such that it only contains entries with the maximum match length
-        print(f'matchlens : {[v[1] for v in entryDict.values()]}')
         longestPrefMatch = max([v[1] for v in entryMatches])
         entryMatches = [v[0] for v in entryMatches if v[1] > 0 and v[1] == longestPrefMatch]
 
-        print('this is the filtered dictionary:')
-        print(entryMatches)
-
         if len(entryMatches) == 0:
-            print(f'yoqength 0, ip: {ip}, match: {longestPrefMatch}')
-            print(self.routingTable)
-            print(f'entry len: {len(entryMatches)}, routlen: {len(self.routingTable)}')
-            print(self.matches(ip, '11.0.0.0', '255.0.0.0'))
-
-#           00001011 00000000 00000000 00000000
-#           00001011 00000000 00000000 00011001
-
             return None
         elif len(entryMatches) == 1:
             return entryMatches[0]['peer']
@@ -136,7 +112,9 @@ class Router:
             entryMatches = [v for v in entryMatches if v['localpref'] == maxLocalPref]
             if len(entryMatches) == 1:
                 return entryMatches[0]['peer']
-            entryMatches = [v for v in entryMatches if v['selfOrigin'] == True]
+            tempEntryMatches = [v for v in entryMatches if v['selfOrigin'] == True]
+            if len(tempEntryMatches) > 0:
+                entryMatches = tempEntryMatches
             if len(entryMatches) == 1:
                 return entryMatches[0]['peer']
             shortestASPath = min([len(v['ASPath']) for v in entryMatches])
@@ -145,30 +123,11 @@ class Router:
                 return entryMatches[0]['peer']
             originWeights = {'IGP':2, 'EGP':1, 'UNK':0}
             bestOriginWeight = max([originWeights[v['origin']] for v in entryMatches])
-            entryMatches = [v for v in entryMatches if originWeights(v['origin']) == bestOriginWeight]
+            entryMatches = [v for v in entryMatches if originWeights[v['origin']] == bestOriginWeight]
             if len(entryMatches) == 1:
                 return entryMatches[0]['peer']
             return min([v['peer'] for v in entryMatches])
             
-            print('post localpref filtering-----------------------')
-            print(entryMatches)
-            
-
-        print('printing routingggggg table')
-        print(self.routingTable)
-        print('printing match lengths')
-        print(entryDict)
-        print('printing filtered match lengths')
-        print(entryMatches)
-
-        '''
-        for entry in self.routingTable:
-            matchLen = self.matches(ip, entry['network'], entry['netmask'])
-            if matchLen > bestMatchLen:
-                bestMatchLen = matchLen
-                bestMatch = entry
-        return bestMatch if bestMatchLen > 0 else None
-        '''
 
     # don't know if this actually works this way
     def getRouterFromIp(self, ip):
