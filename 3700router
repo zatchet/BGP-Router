@@ -83,12 +83,9 @@ class Router:
 
     # returns the length of the prefix match, or 0 if they don't match
     def matches(self, destIp, network, netmask):
-        print('matches: ' + destIp, netmask, netmask)
         # https://stackoverflow.com/questions/38085571/how-use-netaddr-to-convert-subnet-mask-to-cidr-in-python
         netmaskBits = sum(bin(int(x)).count('1') for x in netmask.split('.'))
-        ans = netmaskBits if self.ipToBinStr(destIp)[:netmaskBits] == self.ipToBinStr(network)[:netmaskBits] else 0
-        print(ans)
-        return ans
+        return netmaskBits if self.ipToBinStr(destIp)[:netmaskBits] == self.ipToBinStr(network)[:netmaskBits] else 0
 
     # TODO make this support the other tie-breaking rules
     def getBestMatch(self, ip):
