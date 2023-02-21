@@ -100,55 +100,58 @@ class Router:
         bestMatchLen = 0
 
         entryDict = {}
+        entryMatches = []
         
         print(f'rlen: {len(self.routingTable)}')
         for entry in self.routingTable:
             print('foo')
             entryDict[entry['peer']] = (entry, self.matches(ip, entry['network'], entry['netmask']))
+            entryMatches.append((entry, self.matches(ip, entry['network'], entry['netmask'])))
 
-        print(f'elen: {len(entryDict)}')
+        print(f'elen: {len(entryMatches)}')
         
         # filter dictionary such that it only contains entries with the maximum match length
         print(f'matchlens : {[v[1] for v in entryDict.values()]}')
-        longestPrefMatch = max([v[1] for v in entryDict.values()])
-        filteredDict = {k:v for (k,v) in entryDict.items() if v[1] > 0 and v[1] == longestPrefMatch}
+        longestPrefMatch = max([v[1] for v in entryMatches])
+        entryMatches = [v[0] for v in entryMatches if v[1] > 0 and v[1] == longestPrefMatch]
 
         print('this is the filtered dictionary:')
-        print(filteredDict)
+        print(entryMatches)
 
-        if len(filteredDict) == 0:
+        if len(entryMatches) == 0:
             print(f'yoqength 0, ip: {ip}, match: {longestPrefMatch}')
             print(self.routingTable)
-            print(f'entry len: {len(entryDict)}, routlen: {len(self.routingTable)}')
+            print(f'entry len: {len(entryMatches)}, routlen: {len(self.routingTable)}')
             print(self.matches(ip, '11.0.0.0', '255.0.0.0'))
 
 #           00001011 00000000 00000000 00000000
 #           00001011 00000000 00000000 00011001
 
             return None
-        elif len(filteredDict) == 1:
-            return list(filteredDict.keys())[0]
+        elif len(entryMatches) == 1:
+            return entryMatches[0]['peer']
         else:
-            maxLocalPref = max([v[0]['localpref'] for v in filteredDict.values()])
-            filteredDict = {k:v for (k,v) in filteredDict.items() if v[0]['localpref'] == maxLocalPref}
-            if len(filteredDict) == 1:
-                return list(filteredDict.keys())[0]
-            filteredDict = {k:v for (k,v) in filteredDict.items() if v[0]['selfOrigin'] == True}
-            if len(filteredDict) == 1:
-                return list(filteredDict.keys())[0]
-            shortestASPath = min([len(v[0]['ASPath']) for v in filteredDict.values()])
-            filteredDict = {k:v for (k,v) in filteredDict.items() if len(v[0]['ASPath']) == shortestASPath}
-            if len(filteredDict) == 1:
-                return list(filteredDict.keys())[0]
+            print('into the tie....')
+            maxLocalPref = max([v['localpref'] for v in entryMatches])
+            entryMatches = [v for v in entryMatches if v['localpref'] == maxLocalPref]
+            if len(entryMatches) == 1:
+                return entryMatches[0]['peer']
+            entryMatches = [v for v in entryMatches if v['selfOrigin'] == True]
+            if len(entryMatches) == 1:
+                return entryMatches[0]['peer']
+            shortestASPath = min([len(v['ASPath']) for v in entryMatches])
+            entryMatches = [v for v in entryMatches if len(v['ASPath']) == shortestASPath]
+            if len(entryMatches) == 1:
+                return entryMatches[0]['peer']
             originWeights = {'IGP':2, 'EGP':1, 'UNK':0}
-            bestOriginWeight = max([originWeights[v[0]['origin']] for v in filteredDict.values()])
-            filteredDict = {k:v for (k,v) in filteredDict.items() if originWeights(v[0]['origin']) == bestOriginWeight}
-            if len(filteredDict) == 1:
-                return list(filteredDict.keys())[0]
-            return min(list(filteredDict.keys()))
+            bestOriginWeight = max([originWeights[v['origin']] for v in entryMatches])
+            entryMatches = [v for v in entryMatches if originWeights(v['origin']) == bestOriginWeight]
+            if len(entryMatches) == 1:
+                return entryMatches[0]['peer']
+            return min([v['peer'] for v in entryMatches])
             
             print('post localpref filtering-----------------------')
-            print(filteredDict)
+            print(entryMatches)
             
 
         print('printing routingggggg table')
@@ -156,7 +159,7 @@ class Router:
         print('printing match lengths')
         print(entryDict)
         print('printing filtered match lengths')
-        print(filteredDict)
+        print(entryMatches)
 
         '''
         for entry in self.routingTable:
