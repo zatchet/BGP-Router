@@ -72,8 +72,14 @@ class Router:
                         'dst': neighbor, 
                         'msg': obj}))
             case 'prov' | 'peer':
-                # send to only customers
-                pass
+                print('peer or prov')
+                for neighbor in self.sockets.keys():
+                    if self.relations[neighbor] == 'cust' and neighbor != src:
+                        self.send(neighbor, json.dumps({
+                            'type': 'update',
+                            'src': self.our_addr(neighbor),
+                            'dst': neighbor,
+                            'msg': obj}))
 
     # converts '127.0.0.1' to '01111111000000000000000000000001', for example
     def ipToBinStr(self, ip):
@@ -81,10 +87,13 @@ class Router:
         binquads = [str(bin(quad))[2:].rjust(8, '0') for quad in quads]
         return ''.join(binquads)
 
+    def getNetmaskBits(self, netmask):
+        return sum(bin(int(x)).count('1') for x in netmask.split('.'))
+
     # returns the length of the prefix match, or 0 if they don't match
     def matches(self, destIp, network, netmask):
         # https://stackoverflow.com/questions/38085571/how-use-netaddr-to-convert-subnet-mask-to-cidr-in-python
-        netmaskBits = sum(bin(int(x)).count('1') for x in netmask.split('.'))
+        netmaskBits = self.getNetmaskBits(netmask)
         return netmaskBits if self.ipToBinStr(destIp)[:netmaskBits] == self.ipToBinStr(network)[:netmaskBits] else 0
 
     # TODO make this support the other tie-breaking rules
@@ -132,27 +141,35 @@ class Router:
         quads[3] = int(str(quads[3])[0])
         return "%d.%d.%d.%d" % (quads[0], quads[1], quads[2], quads[3])
 
+    def sendNoRoute(self, src, dst):
+        self.send(dst, json.dumps({
+            'type': 'no route',
+            'src': src,
+            'dst': dst,
+            'msg': {}}))
+
     def handleDataMsg(self, obj):
         print('data obj--------------------------')
         print(obj)
         peer = self.getBestMatch(obj['dst'])
         if peer is None:
-            pass
-            # TODO send a no route message back
+            self.sendNoRoute(self.our_addr(obj['src']), self.getBestMatch(obj['src']))
         else:
             # TODO ensure legality
-            srcRouter = self.getRouterFromIp(obj['src'])
-            dstRouter = self.getRouterFromIp(obj['dst'])
-            print(self.relations)
+            dstRouter = self.getBestMatch(obj['dst'])
+            srcRouter = self.getBestMatch(obj['src'])
+            print('ip\'s: ', obj['src'], obj['dst'])
 
-            # TODO figure out how to derive source/dest router from source/dest ips so we can ensure legality
-            if True: #self.relations[srcRouter] == 'cust' or self.relations[dstRouter] == 'cust':
-                print('i\'m sending data woooooooooooooooooo')
+            print('routerz:')
+            print(dstRouter)
+            print(obj['src'])
+            print(self.sockets.keys())
+
+            # determine compliance
+            if (srcRouter and self.relations[srcRouter] == 'cust') or (dstRouter and self.relations[dstRouter] == 'cust'):
                 self.send(peer, json.dumps(obj))
             else:
-                pass
-                # not making money, so drop!
-                # TODO send a no route message back
+                self.sendNoRoute(self.our_addr(obj['src']), self.getBestMatch(obj['src']))
     
     def handleUpdateMsg(self, obj):
         print('?????????????????? recieved an update from a router')
@@ -172,6 +189,48 @@ class Router:
             'dst': obj['src'],
             'msg': self.routingTable}))
 
+    def handleWithdrawMsg(self, obj):
+        # TODO save copy of withdraw message
+
+        print('withdraw msg---------------')
+        print(obj)
+        print('pre delete routing table')
+        print(self.routingTable)
+
+        for entryToDel in obj['msg']:
+            for entry in self.routingTable:
+                if (entryToDel['network'] == entry['network']
+                    and entryToDel['netmask'] == entry['netmask']
+                        and entry['peer'] == obj['src']):
+                    self.routingTable.remove(entry)
+
+        print('post delete routing table')
+        print(self.routingTable)
+
+        match self.relations[obj['src']]:
+            case 'cust':
+                # send to all neighbors
+                for neighbor in self.sockets.keys():
+                    if neighbor == obj['src']:
+                        # don't send the update back to itself
+                        continue
+                    self.send(neighbor, json.dumps({
+                        'type': 'withdraw', 
+                        'src': self.our_addr(neighbor), 
+                        'dst': neighbor, 
+                        'msg': obj['msg']}))
+            case 'prov' | 'peer':
+                # send to only customers
+                for neighbor in self.sockets.keys():
+                    if self.relations[neighbor] == 'cust' and neighbor != obj['src']:
+                        # don't send the update back to itself
+                        self.send(neighbor, json.dumps({
+                            'type': 'withdraw',
+                            'src': self.our_addr(neighbor),
+                            'dst': neighbor,
+                            'msg': obj['msg']}))
+                    
+
     def handleMsg(self, obj):
         print('handling msg: ')
         print(obj)
@@ -182,6 +241,51 @@ class Router:
                 self.handleDataMsg(obj)
             case 'dump':
                 self.handleDumpMsg(obj)
+            case 'withdraw':
+                self.handleWithdrawMsg(obj)
+
+    def adjacent(self, network1, network2):
+        if network1['netmask'] != network2['netmask']:
+            return False
+        
+        netmaskBits = self.getNetmaskBits(network1['netmask'])
+
+        network1str = self.ipToBinStr(network1['network'])
+        network2str = self.ipToBinStr(network2['network'])
+
+        return (network1str[:netmaskBits-1] == network2str[:netmaskBits-1]
+                and network1str[:netmaskBits-1] != network2str[:netmaskBits-1])
+
+    def canBeAggregated(self, network1, network2):
+        return (self.adjacent(network1, network2) and
+                network1['peer'] == network2['peer'] and
+                network1['localpref'] == network2['localpref'] and
+                network1['origin'] == network2['origin'] and
+                network1['ASPath'] == network2['ASPath'] and
+                network1['selfOrigin'] == network2['selfOrigin'])
+
+    def aggregateEntries(self, network1, network2, netmaskLen):
+
+        netmaskLen = self.getNetmaskBits(network1['netmask'])
+        newNetworkStr = self.ipToBinStr(network1['network'])[:netmaskLen - 1].ljust(32, '0')
+        newNetMaskBits = netmaskLen - 1
+
+        quads = [str(int(newNetworkStr[i:i+8], 2)) for i in range(0, len(newNetworkStr), 8)]
+        newNetwork = '.'.join(quads)
+
+        newNetMaskStr = '1' * newNetMaskBits
+        newNetMaskStr = newNetMaskStr.ljust(32, '0')
+
+        maskQuads = [str(int(newNetMaskStr[i:i+8], 2)) for i in range(0, len(newNetMaskStr), 8)]
+        newNetmask = '.'.join(maskQuads)
+        
+        return {'network': newNetwork,
+                'netmask': newNetmask,
+                'peer': network1['peer'],
+                'origin': network1['origin'],
+                'selfOrigin': network1['selfOrigin'],
+                'ASPath': network1['ASPath'],
+                'localpref': network1['localpref']}
     
     def run(self):
         while True:
