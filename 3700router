@@ -1,6 +1,6 @@
 #!/usr/bin/env -S python3 -u
 
-import argparse, socket, time, json, select, struct, sys, math, select
+import argparse, socket, time, json, select, struct, sys, math, select, copy
 
 class Router:
 
@@ -8,6 +8,7 @@ class Router:
     sockets = {}
     ports = {}
     routingTable = []
+    copies = []
 
     def __init__(self, asn, connections):
         print("Router at AS %s starting up" % asn)
@@ -29,20 +30,56 @@ class Router:
     def send(self, network, message):
         self.sockets[network].sendto(message.encode('utf-8'), ('localhost', self.ports[network]))
 
-    def addRoutingEntry(self, network, netmask, ASPath, peer, localpref, selfOrigin, origin):
-        self.routingTable.append({
-            'network': network, 
-            'netmask': netmask, 
-            'ASPath': ASPath,
-            'peer' : peer,
-            'localpref' : localpref,
-            'selfOrigin' : selfOrigin,
-            'origin' : origin})
+    def adjacent(self, network1, network2):
+        if network1['netmask'] != network2['netmask']:
+            return False
+        
+        netmaskBits = self.getNetmaskBits(network1['netmask'])
 
-        print('current routing table--------------')
-        print(self.routingTable)
-        print('relations-------------------')
-        print(self.relations)
+        network1str = self.ipToBinStr(network1['network'])
+        network2str = self.ipToBinStr(network2['network'])
+
+        return (network1str[:netmaskBits-1] == network2str[:netmaskBits-1]
+                and network1str[netmaskBits-1] != network2str[netmaskBits-1])
+
+    def canBeAggregated(self, network1, network2):
+        return (self.adjacent(network1, network2) and
+                network1['peer'] == network2['peer'] and
+                network1['localpref'] == network2['localpref'] and
+                network1['origin'] == network2['origin'] and
+                network1['ASPath'] == network2['ASPath'] and
+                network1['selfOrigin'] == network2['selfOrigin'])
+
+    def aggregateEntries(self, network1):
+
+        netmaskLen = self.getNetmaskBits(network1['netmask'])
+        newNetworkStr = self.ipToBinStr(network1['network'])[:netmaskLen - 1].ljust(32, '0')
+        newNetMaskBits = netmaskLen - 1
+
+        quads = [str(int(newNetworkStr[i:i+8], 2)) for i in range(0, len(newNetworkStr), 8)]
+        newNetwork = '.'.join(quads)
+
+        newNetMaskStr = ('1' * newNetMaskBits).ljust(32, '0')
+
+        maskQuads = [str(int(newNetMaskStr[i:i+8], 2)) for i in range(0, len(newNetMaskStr), 8)]
+        newNetmask = '.'.join(maskQuads)
+        
+        return {'network': newNetwork,
+                'netmask': newNetmask,
+                'peer': network1['peer'],
+                'origin': network1['origin'],
+                'selfOrigin': network1['selfOrigin'],
+                'ASPath': network1['ASPath'],
+                'localpref': network1['localpref']}
+
+    def performAggregation(self):
+        for entry1 in self.routingTable:
+            for entry2 in self.routingTable:
+                if entry1 != entry2:
+                    if self.canBeAggregated(entry1, entry2):
+                        self.routingTable.remove(entry1)
+                        self.routingTable.remove(entry2)
+                        self.routingTable.append(self.aggregateEntries(entry1))
     
     def sendUpdates(self, obj, src):
 
@@ -57,25 +94,12 @@ class Router:
         print('after modifying-----------------------------------')
         print(obj)
 
-        match self.relations[src]:
-            case 'cust':
-                # send to all neighbors
-                for neighbor in self.sockets.keys():
-                    if neighbor == src:
-                        # don't send the update back to itself
-                        continue
-                    print(f'!!!!!!!!!!!!!!!!!!!!!!!sending update to neighbor: {neighbor}')
-                    print(neighbor)
-                    self.send(neighbor, json.dumps({
-                        'type': 'update', 
-                        'src': self.our_addr(neighbor), 
-                        'dst': neighbor, 
-                        'msg': obj}))
-            case 'prov' | 'peer':
-                print('peer or prov')
-                for neighbor in self.sockets.keys():
-                    if self.relations[neighbor] == 'cust' and neighbor != src:
-                        self.send(neighbor, json.dumps({
+        for neighbor in self.sockets.keys():
+            if neighbor == src:
+                # don't send back to itself
+                continue
+            if self.relations[src] == 'cust' or self.relations[neighbor] == 'cust':
+                self.send(neighbor, json.dumps({
                             'type': 'update',
                             'src': self.our_addr(neighbor),
                             'dst': neighbor,
@@ -94,7 +118,7 @@ class Router:
     def matches(self, destIp, network, netmask):
         # https://stackoverflow.com/questions/38085571/how-use-netaddr-to-convert-subnet-mask-to-cidr-in-python
         netmaskBits = self.getNetmaskBits(netmask)
-        return netmaskBits if self.ipToBinStr(destIp)[:netmaskBits] == self.ipToBinStr(network)[:netmaskBits] else 0
+        return netmaskBits if self.ipToBinStr(destIp)[:netmaskBits] == self.ipToBinStr(network)[:netmaskBits] else None
 
     # TODO make this support the other tie-breaking rules
     def getBestMatch(self, ip):
@@ -102,15 +126,18 @@ class Router:
         entryMatches = []
 
         for entry in self.routingTable:
-            entryMatches.append((entry, self.matches(ip, entry['network'], entry['netmask'])))
-
-        # filter dictionary such that it only contains entries with the maximum match length
-        longestPrefMatch = max([v[1] for v in entryMatches])
-        entryMatches = [v[0] for v in entryMatches if v[1] > 0 and v[1] == longestPrefMatch]
+            matchlen = self.matches(ip, entry['network'], entry['netmask'])
+            if matchlen is not None:
+                entryMatches.append((entry, matchlen))
 
         if len(entryMatches) == 0:
             return None
-        elif len(entryMatches) == 1:
+
+        # filter dictionary such that it only contains entries with the maximum match length
+        longestPrefMatch = max([v[1] for v in entryMatches])
+        entryMatches = [v[0] for v in entryMatches if v[1] == longestPrefMatch]
+
+        if len(entryMatches) == 1:
             return entryMatches[0]['peer']
         else:
             print('into the tie....')
@@ -133,7 +160,6 @@ class Router:
             if len(entryMatches) == 1:
                 return entryMatches[0]['peer']
             return min([v['peer'] for v in entryMatches])
-            
 
     # don't know if this actually works this way
     def getRouterFromIp(self, ip):
@@ -148,35 +174,54 @@ class Router:
             'dst': dst,
             'msg': {}}))
 
-    def handleDataMsg(self, obj):
+    def handleDataMsg(self, obj, src):
         print('data obj--------------------------')
         print(obj)
         peer = self.getBestMatch(obj['dst'])
         if peer is None:
-            self.sendNoRoute(self.our_addr(obj['src']), self.getBestMatch(obj['src']))
+            print('no route foundzzz!')
+            print(obj)
+            print(self.routingTable)
+
+            self.sendNoRoute(self.our_addr(src), self.getBestMatch(obj['src']))
         else:
             # TODO ensure legality
             dstRouter = self.getBestMatch(obj['dst'])
-            srcRouter = self.getBestMatch(obj['src'])
             print('ip\'s: ', obj['src'], obj['dst'])
 
-            print('routerz:')
+            print('routers:')
             print(dstRouter)
+            print(src)
             print(obj['src'])
             print(self.sockets.keys())
 
             # determine compliance
-            if (srcRouter and self.relations[srcRouter] == 'cust') or (dstRouter and self.relations[dstRouter] == 'cust'):
+            if (self.relations[src] == 'cust') or (dstRouter and self.relations[dstRouter] == 'cust'):
                 self.send(peer, json.dumps(obj))
             else:
-                self.sendNoRoute(self.our_addr(obj['src']), self.getBestMatch(obj['src']))
+                print('dropping!')
+                self.sendNoRoute(self.our_addr(src), self.getBestMatch(obj['src']))
     
+    def addRoutingEntry(self, obj):
+        self.routingTable.append({
+            'network': obj['msg']['network'], 
+            'netmask': obj['msg']['netmask'], 
+            'ASPath': obj['msg']['ASPath'],
+            'peer' : obj['src'],
+            'localpref' : obj['msg']['localpref'],
+            'selfOrigin' : obj['msg']['selfOrigin'],
+            'origin' : obj['msg']['origin']})
+
+        print('current routing table--------------')
+        print(self.routingTable)
+        print('relations-------------------')
+        print(self.relations)
+
     def handleUpdateMsg(self, obj):
         print('?????????????????? recieved an update from a router')
         # 1 TODO save a copy
         # 2 - add to routing table
-        self.addRoutingEntry(obj['msg']['network'], obj['msg']['netmask'], obj['msg']['ASPath'], 
-        obj['src'], obj['msg']['localpref'], obj['msg']['selfOrigin'], obj['msg']['origin'])
+        self.addRoutingEntry(obj)
         # 3 - send copies to approproate neighbors
         self.sendUpdates(obj['msg'], obj['src'])
 
@@ -189,6 +234,14 @@ class Router:
             'dst': obj['src'],
             'msg': self.routingTable}))
 
+    def delEntry(self, obj):
+        for entryToDel in obj['msg']:
+            for entry in self.routingTable:
+                if (entryToDel['network'] == entry['network']
+                    and entryToDel['netmask'] == entry['netmask']
+                        and entry['peer'] == obj['src']):
+                    self.routingTable.remove(entry)
+
     def handleWithdrawMsg(self, obj):
         # TODO save copy of withdraw message
 
@@ -197,96 +250,55 @@ class Router:
         print('pre delete routing table')
         print(self.routingTable)
 
-        for entryToDel in obj['msg']:
-            for entry in self.routingTable:
-                if (entryToDel['network'] == entry['network']
-                    and entryToDel['netmask'] == entry['netmask']
-                        and entry['peer'] == obj['src']):
-                    self.routingTable.remove(entry)
+        self.delEntry(obj)
 
         print('post delete routing table')
         print(self.routingTable)
 
-        match self.relations[obj['src']]:
-            case 'cust':
-                # send to all neighbors
-                for neighbor in self.sockets.keys():
-                    if neighbor == obj['src']:
-                        # don't send the update back to itself
-                        continue
-                    self.send(neighbor, json.dumps({
-                        'type': 'withdraw', 
-                        'src': self.our_addr(neighbor), 
-                        'dst': neighbor, 
-                        'msg': obj['msg']}))
-            case 'prov' | 'peer':
-                # send to only customers
-                for neighbor in self.sockets.keys():
-                    if self.relations[neighbor] == 'cust' and neighbor != obj['src']:
-                        # don't send the update back to itself
-                        self.send(neighbor, json.dumps({
+        for neighbor in self.sockets.keys():
+            if neighbor == obj['src']:
+                # don't send back to itself
+                continue
+            if self.relations[obj['src']] == 'cust' or self.relations[neighbor] == 'cust':
+                self.send(neighbor, json.dumps({
                             'type': 'withdraw',
                             'src': self.our_addr(neighbor),
                             'dst': neighbor,
                             'msg': obj['msg']}))
-                    
 
-    def handleMsg(self, obj):
+    def rebuildTable(self):
+        print('copezz')
+        print(self.copies)
+        for copy in self.copies:
+            if copy['type'] == 'update':
+                print('heres the copy')
+                print(copy)
+                self.addRoutingEntry(copy)
+            else:
+                self.delEntry(copy)
+
+    def performDisaggregation(self):
+        self.routingTable = []
+        self.rebuildTable()
+
+    def handleMsg(self, obj, src):
         print('handling msg: ')
         print(obj)
         match obj['type']:
             case 'update':
+                self.copies.append(copy.deepcopy(obj))
                 self.handleUpdateMsg(obj)
+                self.performAggregation()
             case 'data':
-                self.handleDataMsg(obj)
+                self.handleDataMsg(obj, src)
             case 'dump':
                 self.handleDumpMsg(obj)
             case 'withdraw':
+                self.copies.append(copy.deepcopy(obj))
+                self.performDisaggregation()
                 self.handleWithdrawMsg(obj)
-
-    def adjacent(self, network1, network2):
-        if network1['netmask'] != network2['netmask']:
-            return False
+                self.performAggregation()
         
-        netmaskBits = self.getNetmaskBits(network1['netmask'])
-
-        network1str = self.ipToBinStr(network1['network'])
-        network2str = self.ipToBinStr(network2['network'])
-
-        return (network1str[:netmaskBits-1] == network2str[:netmaskBits-1]
-                and network1str[:netmaskBits-1] != network2str[:netmaskBits-1])
-
-    def canBeAggregated(self, network1, network2):
-        return (self.adjacent(network1, network2) and
-                network1['peer'] == network2['peer'] and
-                network1['localpref'] == network2['localpref'] and
-                network1['origin'] == network2['origin'] and
-                network1['ASPath'] == network2['ASPath'] and
-                network1['selfOrigin'] == network2['selfOrigin'])
-
-    def aggregateEntries(self, network1, network2, netmaskLen):
-
-        netmaskLen = self.getNetmaskBits(network1['netmask'])
-        newNetworkStr = self.ipToBinStr(network1['network'])[:netmaskLen - 1].ljust(32, '0')
-        newNetMaskBits = netmaskLen - 1
-
-        quads = [str(int(newNetworkStr[i:i+8], 2)) for i in range(0, len(newNetworkStr), 8)]
-        newNetwork = '.'.join(quads)
-
-        newNetMaskStr = '1' * newNetMaskBits
-        newNetMaskStr = newNetMaskStr.ljust(32, '0')
-
-        maskQuads = [str(int(newNetMaskStr[i:i+8], 2)) for i in range(0, len(newNetMaskStr), 8)]
-        newNetmask = '.'.join(maskQuads)
-        
-        return {'network': newNetwork,
-                'netmask': newNetmask,
-                'peer': network1['peer'],
-                'origin': network1['origin'],
-                'selfOrigin': network1['selfOrigin'],
-                'ASPath': network1['ASPath'],
-                'localpref': network1['localpref']}
-    
     def run(self):
         while True:
             socks = select.select(self.sockets.values(), [], [], 0.1)[0]
@@ -300,7 +312,7 @@ class Router:
                 msg = k.decode('utf-8')
                 obj = json.loads(msg)
                 print(obj)
-                self.handleMsg(obj)
+                self.handleMsg(obj, srcif)
                 #print("Received message '%s' from %s" % (msg, srcif))
 
 if __name__ == "__main__":
