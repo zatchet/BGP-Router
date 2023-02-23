@@ -1,6 +1,6 @@
 #!/usr/bin/env -S python3 -u
 
-import argparse, socket, time, json, select, struct, sys, math, select, copy
+import argparse, socket, time, json, select, struct, sys, math, select, copy, itertools as it
 
 class Router:
 
@@ -73,13 +73,11 @@ class Router:
                 'localpref': network1['localpref']}
 
     def performAggregation(self):
-        for entry1 in self.routingTable:
-            for entry2 in self.routingTable:
-                if entry1 != entry2:
-                    if self.canBeAggregated(entry1, entry2):
-                        self.routingTable.remove(entry1)
-                        self.routingTable.remove(entry2)
-                        self.routingTable.append(self.aggregateEntries(entry1))
+        for (entry1, entry2) in list(it.combinations(self.routingTable, 2)):
+            if self.canBeAggregated(entry1, entry2):
+                self.routingTable.remove(entry1)
+                self.routingTable.remove(entry2)
+                self.routingTable.append(self.aggregateEntries(entry1))
     
     def sendUpdates(self, obj, src):
 
