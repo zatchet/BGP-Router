@@ -83,17 +83,11 @@ class Router:
     
     def sendUpdates(self, obj, src):
 
-        print('updte msg-----------------------------------')
-        print(obj)
-
         del obj['localpref']
         del obj['origin']
         del obj['selfOrigin']
         obj['ASPath'] = [self.asn] + obj['ASPath']
         
-        print('after modifying-----------------------------------')
-        print(obj)
-
         for neighbor in self.sockets.keys():
             if neighbor == src:
                 # don't send back to itself
@@ -140,7 +134,6 @@ class Router:
         if len(entryMatches) == 1:
             return entryMatches[0]['peer']
         else:
-            print('into the tie....')
             maxLocalPref = max([v['localpref'] for v in entryMatches])
             entryMatches = [v for v in entryMatches if v['localpref'] == maxLocalPref]
             if len(entryMatches) == 1:
@@ -175,31 +168,16 @@ class Router:
             'msg': {}}))
 
     def handleDataMsg(self, obj, src):
-        print('data obj--------------------------')
-        print(obj)
+    
         peer = self.getBestMatch(obj['dst'])
         if peer is None:
-            print('no route foundzzz!')
-            print(obj)
-            print(self.routingTable)
-
             self.sendNoRoute(self.our_addr(src), self.getBestMatch(obj['src']))
         else:
-            # TODO ensure legality
             dstRouter = self.getBestMatch(obj['dst'])
-            print('ip\'s: ', obj['src'], obj['dst'])
-
-            print('routers:')
-            print(dstRouter)
-            print(src)
-            print(obj['src'])
-            print(self.sockets.keys())
-
             # determine compliance
             if (self.relations[src] == 'cust') or (dstRouter and self.relations[dstRouter] == 'cust'):
                 self.send(peer, json.dumps(obj))
             else:
-                print('dropping!')
                 self.sendNoRoute(self.our_addr(src), self.getBestMatch(obj['src']))
     
     def addRoutingEntry(self, obj):
@@ -212,22 +190,13 @@ class Router:
             'selfOrigin' : obj['msg']['selfOrigin'],
             'origin' : obj['msg']['origin']})
 
-        print('current routing table--------------')
-        print(self.routingTable)
-        print('relations-------------------')
-        print(self.relations)
-
     def handleUpdateMsg(self, obj):
-        print('?????????????????? recieved an update from a router')
-        # 1 TODO save a copy
         # 2 - add to routing table
         self.addRoutingEntry(obj)
         # 3 - send copies to approproate neighbors
         self.sendUpdates(obj['msg'], obj['src'])
 
     def handleDumpMsg(self, obj):
-        print('dump msg: [[[[[[[[[[[[[[]]]]]]]]]]]]]]')
-        print(obj)
         self.send(obj['src'], json.dumps({
             'type': 'table',
             'src': obj['dst'],
@@ -243,17 +212,7 @@ class Router:
                     self.routingTable.remove(entry)
 
     def handleWithdrawMsg(self, obj):
-        # TODO save copy of withdraw message
-
-        print('withdraw msg---------------')
-        print(obj)
-        print('pre delete routing table')
-        print(self.routingTable)
-
         self.delEntry(obj)
-
-        print('post delete routing table')
-        print(self.routingTable)
 
         for neighbor in self.sockets.keys():
             if neighbor == obj['src']:
@@ -267,12 +226,8 @@ class Router:
                             'msg': obj['msg']}))
 
     def rebuildTable(self):
-        print('copezz')
-        print(self.copies)
         for copy in self.copies:
             if copy['type'] == 'update':
-                print('heres the copy')
-                print(copy)
                 self.addRoutingEntry(copy)
             else:
                 self.delEntry(copy)
@@ -282,8 +237,6 @@ class Router:
         self.rebuildTable()
 
     def handleMsg(self, obj, src):
-        print('handling msg: ')
-        print(obj)
         if obj['type'] == 'update':
             self.copies.append(copy.deepcopy(obj))
             self.handleUpdateMsg(obj)
@@ -310,9 +263,7 @@ class Router:
                         break
                 msg = k.decode('utf-8')
                 obj = json.loads(msg)
-                print(obj)
                 self.handleMsg(obj, srcif)
-                #print("Received message '%s' from %s" % (msg, srcif))
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='route packets')
