@@ -284,20 +284,19 @@ class Router:
     def handleMsg(self, obj, src):
         print('handling msg: ')
         print(obj)
-        match obj['type']:
-            case 'update':
-                self.copies.append(copy.deepcopy(obj))
-                self.handleUpdateMsg(obj)
-                self.performAggregation()
-            case 'data':
-                self.handleDataMsg(obj, src)
-            case 'dump':
-                self.handleDumpMsg(obj)
-            case 'withdraw':
-                self.copies.append(copy.deepcopy(obj))
-                self.performDisaggregation()
-                self.handleWithdrawMsg(obj)
-                self.performAggregation()
+        if obj['type'] == 'update':
+            self.copies.append(copy.deepcopy(obj))
+            self.handleUpdateMsg(obj)
+            self.performAggregation()
+        elif obj['type'] == 'data':
+            self.handleDataMsg(obj, src)
+        elif obj['type'] == 'dump':
+            self.handleDumpMsg(obj)
+        elif obj['type'] == 'withdraw':
+            self.copies.append(copy.deepcopy(obj))
+            self.performDisaggregation()
+            self.handleWithdrawMsg(obj)
+            self.performAggregation()
         
     def run(self):
         while True:
