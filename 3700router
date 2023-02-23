@@ -104,11 +104,11 @@ class Router:
         return ''.join(binquads)
 
     def getNetmaskBits(self, netmask):
+        # https://stackoverflow.com/questions/38085571/how-use-netaddr-to-convert-subnet-mask-to-cidr-in-python
         return sum(bin(int(x)).count('1') for x in netmask.split('.'))
 
-    # returns the length of the prefix match, or 0 if they don't match
+    # returns the length of the prefix match, or None if they don't match
     def matches(self, destIp, network, netmask):
-        # https://stackoverflow.com/questions/38085571/how-use-netaddr-to-convert-subnet-mask-to-cidr-in-python
         netmaskBits = self.getNetmaskBits(netmask)
         return netmaskBits if self.ipToBinStr(destIp)[:netmaskBits] == self.ipToBinStr(network)[:netmaskBits] else None
 
@@ -151,12 +151,6 @@ class Router:
             if len(entryMatches) == 1:
                 return entryMatches[0]['peer']
             return min([v['peer'] for v in entryMatches])
-
-    # don't know if this actually works this way
-    def getRouterFromIp(self, ip):
-        quads = list(int(qdn) for qdn in ip.split('.'))
-        quads[3] = int(str(quads[3])[0])
-        return "%d.%d.%d.%d" % (quads[0], quads[1], quads[2], quads[3])
 
     def sendNoRoute(self, src, dst):
         self.send(dst, json.dumps({
