@@ -1,5 +1,7 @@
 The hardest portion of this project was figuring out how the test cases worked. Because they were in JSON format, they were extremely difficult to read, so we decided to draw out a model to visualize how the router worked. They can be seen below:  
 
+![p3 notes](https://github.com/zarippas/3700project3/blob/main/p3%20notes.png)
+
 For each set of test cases, we followed a similar approach. Firstly, we would run the tests without coding anything, to see what would fail. From there, we would print debug messages to figure out when we should call operations to fix the test case. Finally, we would implement the logic for each method. We would the output of each test case in order to ensure functionality.
 
 One key thing that we did was to do the work by hand and then convert that into an algorithm. This was especially useful for handling IPs and netmasks. Additionally, we would write out the routing tables at different points to make sure we were fully aware of the current condition of the program.
