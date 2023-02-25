@@ -30,18 +30,21 @@ class Router:
     def send(self, network, message):
         self.sockets[network].sendto(message.encode('utf-8'), ('localhost', self.ports[network]))
 
+    # determine if two networks are adjacent numerically 
     def adjacent(self, network1, network2):
+        # if their netmasks aren't the same, then the networks can't be aggregated
         if network1['netmask'] != network2['netmask']:
             return False
         
+        # check if the netmask applied to both networks is the same except for the last bit 
         netmaskBits = self.getNetmaskBits(network1['netmask'])
-
         network1str = self.ipToBinStr(network1['network'])
         network2str = self.ipToBinStr(network2['network'])
 
         return (network1str[:netmaskBits-1] == network2str[:netmaskBits-1]
                 and network1str[netmaskBits-1] != network2str[netmaskBits-1])
 
+    # check if the networks have the same atributes (forward to the same next-hop router, have same localpref, etc.)
     def canBeAggregated(self, network1, network2):
         return (self.adjacent(network1, network2) and
                 network1['peer'] == network2['peer'] and
@@ -50,6 +53,7 @@ class Router:
                 network1['ASPath'] == network2['ASPath'] and
                 network1['selfOrigin'] == network2['selfOrigin'])
 
+    # TODO: add documentation
     def aggregateEntries(self, network1):
 
         netmaskLen = self.getNetmaskBits(network1['netmask'])
@@ -72,6 +76,7 @@ class Router:
                 'ASPath': network1['ASPath'],
                 'localpref': network1['localpref']}
 
+    # TODO: add documentation
     def performAggregation(self):
         for (entry1, entry2) in list(it.combinations(self.routingTable, 2)):
             if self.canBeAggregated(entry1, entry2):
@@ -80,29 +85,34 @@ class Router:
                 self.routingTable.append(self.aggregateEntries(entry1))
     
     def sendUpdates(self, obj, src):
-
+        # remove private fields from announcement
         del obj['localpref']
         del obj['origin']
         del obj['selfOrigin']
+
+        # add the current ASN to the ASPath
         obj['ASPath'] = [self.asn] + obj['ASPath']
         
         for neighbor in self.sockets.keys():
             if neighbor == src:
-                # don't send back to itself
+                # make sure that the update doesn't send back to itself
                 continue
             if self.relations[src] == 'cust' or self.relations[neighbor] == 'cust':
+                # repackage update message and send to neighbor
                 self.send(neighbor, json.dumps({
                             'type': 'update',
                             'src': self.our_addr(neighbor),
                             'dst': neighbor,
                             'msg': obj}))
 
+    # take in an IP address and convert it to a single binary string
     # converts '127.0.0.1' to '01111111000000000000000000000001', for example
     def ipToBinStr(self, ip):
         quads = list(int(qdn) for qdn in ip.split('.'))
         binquads = [str(bin(quad))[2:].rjust(8, '0') for quad in quads]
         return ''.join(binquads)
 
+    # takes in a subnet mask and converts it to CIDR representation
     def getNetmaskBits(self, netmask):
         # https://stackoverflow.com/questions/38085571/how-use-netaddr-to-convert-subnet-mask-to-cidr-in-python
         return sum(bin(int(x)).count('1') for x in netmask.split('.'))
@@ -112,16 +122,17 @@ class Router:
         netmaskBits = self.getNetmaskBits(netmask)
         return netmaskBits if self.ipToBinStr(destIp)[:netmaskBits] == self.ipToBinStr(network)[:netmaskBits] else None
 
-    # TODO make this support the other tie-breaking rules
+    # determines the best match for a given ip in the routing table
     def getBestMatch(self, ip):
-        
         entryMatches = []
 
+        # populate entryMatches with the entry and length of the prefix match for all entries 
         for entry in self.routingTable:
             matchlen = self.matches(ip, entry['network'], entry['netmask'])
             if matchlen is not None:
                 entryMatches.append((entry, matchlen))
 
+        # if none of the entries have a prefix match with the given ip
         if len(entryMatches) == 0:
             return None
 
@@ -129,29 +140,46 @@ class Router:
         longestPrefMatch = max([v[1] for v in entryMatches])
         entryMatches = [v[0] for v in entryMatches if v[1] == longestPrefMatch]
 
+        # if there is only a single data table entry that has a prefix match, then it is the best match
         if len(entryMatches) == 1:
             return entryMatches[0]['peer']
+
         else:
+            # find the max Local Preference value in the entryMatches dict 
             maxLocalPref = max([v['localpref'] for v in entryMatches])
+            # filter the list so it only contains entries with the max Local Preference value
             entryMatches = [v for v in entryMatches if v['localpref'] == maxLocalPref]
+            # if there is a single entry, then it is the best match
             if len(entryMatches) == 1:
                 return entryMatches[0]['peer']
+            
+            # filter the entryMatches dict so that it contains only entries which have selfOrigin set to true 
             tempEntryMatches = [v for v in entryMatches if v['selfOrigin'] == True]
             if len(tempEntryMatches) > 0:
                 entryMatches = tempEntryMatches
             if len(entryMatches) == 1:
                 return entryMatches[0]['peer']
+            
+            # find the length of the shortest ASPath in entryMatches
             shortestASPath = min([len(v['ASPath']) for v in entryMatches])
+            # filter the list so it only contains entries with the shortest ASPath length
             entryMatches = [v for v in entryMatches if len(v['ASPath']) == shortestASPath]
             if len(entryMatches) == 1:
                 return entryMatches[0]['peer']
+
+            # give each possible origin a weight, so we can use built-in numeric functions to find the best origin
             originWeights = {'IGP':2, 'EGP':1, 'UNK':0}
+            # find the best origin value in the list 
             bestOriginWeight = max([originWeights[v['origin']] for v in entryMatches])
+            # filter the list so it only contains entries with highest origin weight
             entryMatches = [v for v in entryMatches if originWeights[v['origin']] == bestOriginWeight]
             if len(entryMatches) == 1:
                 return entryMatches[0]['peer']
+
+            # return the network with the lowest number neighbor
             return min([v['peer'] for v in entryMatches])
 
+    # sends a "no route" message, given a source and destination
     def sendNoRoute(self, src, dst):
         self.send(dst, json.dumps({
             'type': 'no route',
@@ -159,19 +187,20 @@ class Router:
             'dst': dst,
             'msg': {}}))
 
+    # handler for data messages
     def handleDataMsg(self, obj, src):
-    
+        # find the best match in the given routing table for the destination field of the message
         peer = self.getBestMatch(obj['dst'])
         if peer is None:
             self.sendNoRoute(self.our_addr(src), self.getBestMatch(obj['src']))
         else:
-            dstRouter = self.getBestMatch(obj['dst'])
             # determine compliance
-            if (self.relations[src] == 'cust') or (dstRouter and self.relations[dstRouter] == 'cust'):
+            if (self.relations[src] == 'cust') or (peer and self.relations[peer] == 'cust'):
                 self.send(peer, json.dumps(obj))
             else:
                 self.sendNoRoute(self.our_addr(src), self.getBestMatch(obj['src']))
     
+    # adds an entry to the routing table
     def addRoutingEntry(self, obj):
         self.routingTable.append({
             'network': obj['msg']['network'], 
@@ -182,12 +211,14 @@ class Router:
             'selfOrigin' : obj['msg']['selfOrigin'],
             'origin' : obj['msg']['origin']})
 
+    # handles sending an update message 
     def handleUpdateMsg(self, obj):
-        # 2 - add to routing table
+        # add entry to routing table
         self.addRoutingEntry(obj)
-        # 3 - send copies to approproate neighbors
+        # send copies to approproate neighbors
         self.sendUpdates(obj['msg'], obj['src'])
 
+    # sends a dump message, given an obj
     def handleDumpMsg(self, obj):
         self.send(obj['src'], json.dumps({
             'type': 'table',
@@ -195,6 +226,7 @@ class Router:
             'dst': obj['src'],
             'msg': self.routingTable}))
 
+    # deletes an entry from the routing table (checks that network, netmask, and peer are all the same)
     def delEntry(self, obj):
         for entryToDel in obj['msg']:
             for entry in self.routingTable:
@@ -203,13 +235,16 @@ class Router:
                         and entry['peer'] == obj['src']):
                     self.routingTable.remove(entry)
 
+    # handles a withdraw message
     def handleWithdrawMsg(self, obj):
+        # remove dead entry from the forwarding table
         self.delEntry(obj)
-
+        # send copies of the revocation to other neighboring routers
         for neighbor in self.sockets.keys():
             if neighbor == obj['src']:
                 # don't send back to itself
                 continue
+            # checks to make sure it only sends to customers
             if self.relations[obj['src']] == 'cust' or self.relations[neighbor] == 'cust':
                 self.send(neighbor, json.dumps({
                             'type': 'withdraw',
@@ -217,6 +252,7 @@ class Router:
                             'dst': neighbor,
                             'msg': obj['msg']}))
 
+    # rebuilds the table based off the saved copies
     def rebuildTable(self):
         for copy in self.copies:
             if copy['type'] == 'update':
@@ -224,23 +260,30 @@ class Router:
             else:
                 self.delEntry(copy)
 
+    # clears the routing table and rebuilds it
     def performDisaggregation(self):
         self.routingTable = []
         self.rebuildTable()
 
+    # send each incoming message type to its appropriate neighbor
     def handleMsg(self, obj, src):
         if obj['type'] == 'update':
+            # save a copy of the message
             self.copies.append(copy.deepcopy(obj))
             self.handleUpdateMsg(obj)
+            # aggregate after every update message handled
             self.performAggregation()
         elif obj['type'] == 'data':
             self.handleDataMsg(obj, src)
         elif obj['type'] == 'dump':
             self.handleDumpMsg(obj)
         elif obj['type'] == 'withdraw':
+            # save a copy of the message
             self.copies.append(copy.deepcopy(obj))
+            # perform disaggregation and handle any potential withdraw messages
             self.performDisaggregation()
             self.handleWithdrawMsg(obj)
+            # perform aggregation again
             self.performAggregation()
         
     def run(self):
