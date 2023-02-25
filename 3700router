@@ -22,6 +22,7 @@ class Router:
             self.relations[neighbor] = relation
             self.send(neighbor, json.dumps({ "type": "handshake", "src": self.our_addr(neighbor), "dst": neighbor, "msg": {}  }))
     
+    # returns the address of our router on a given destination network
     def our_addr(self, dst):
         quads = list(int(qdn) for qdn in dst.split('.'))
         quads[3] = 1
@@ -53,9 +54,8 @@ class Router:
                 network1['ASPath'] == network2['ASPath'] and
                 network1['selfOrigin'] == network2['selfOrigin'])
 
-    # TODO: add documentation
+    # create an aggregation entry for a given network
     def aggregateEntries(self, network1):
-
         netmaskLen = self.getNetmaskBits(network1['netmask'])
         newNetworkStr = self.ipToBinStr(network1['network'])[:netmaskLen - 1].ljust(32, '0')
         newNetMaskBits = netmaskLen - 1
@@ -68,6 +68,7 @@ class Router:
         maskQuads = [str(int(newNetMaskStr[i:i+8], 2)) for i in range(0, len(newNetMaskStr), 8)]
         newNetmask = '.'.join(maskQuads)
         
+        # return the entry with updated network and netmask
         return {'network': newNetwork,
                 'netmask': newNetmask,
                 'peer': network1['peer'],
@@ -76,7 +77,7 @@ class Router:
                 'ASPath': network1['ASPath'],
                 'localpref': network1['localpref']}
 
-    # TODO: add documentation
+    # perform aggregation of all entries in the routing table
     def performAggregation(self):
         for (entry1, entry2) in list(it.combinations(self.routingTable, 2)):
             if self.canBeAggregated(entry1, entry2):
@@ -112,6 +113,41 @@ class Router:
         binquads = [str(bin(quad))[2:].rjust(8, '0') for quad in quads]
         return ''.join(binquads)
 
+    # breaks the tie for localPref
+    def breakTieLocalPref(self, entryMatches):
+        # find the max Local Preference value in the entryMatches dict 
+        maxLocalPref = max([v['localpref'] for v in entryMatches])
+        # filter the list so it only contains entries with the max Local Preference value
+        entryMatches = [v for v in entryMatches if v['localpref'] == maxLocalPref]
+        # if there is a single entry, then it is the best match
+        return entryMatches
+    
+    # breaks the tie for selfOrigin
+    def breakTieSelfOrigin(self, entryMatches):
+        # filter the entryMatches dict so that it contains only entries which have selfOrigin set to true 
+        tempEntryMatches = [v for v in entryMatches if v['selfOrigin'] == True]
+        if len(tempEntryMatches) > 0:
+            entryMatches = tempEntryMatches
+        return entryMatches
+    
+    # breaks the tie for origin
+    def breakTieOrigin(self, entryMatches):
+        # give each possible origin a weight, so we can use built-in numeric functions to find the best origin
+        originWeights = {'IGP':2, 'EGP':1, 'UNK':0}
+        # find the best origin value in the list 
+        bestOriginWeight = max([originWeights[v['origin']] for v in entryMatches])
+        # filter the list so it only contains entries with highest origin weight
+        entryMatches = [v for v in entryMatches if originWeights[v['origin']] == bestOriginWeight]
+        return entryMatches
+    
+    # breaks the tie for ASPath
+    def breakTieASPath(self, entryMatches):
+        # find the length of the shortest ASPath in entryMatches
+        shortestASPath = min([len(v['ASPath']) for v in entryMatches])
+        # filter the list so it only contains entries with the shortest ASPath length
+        entryMatches = [v for v in entryMatches if len(v['ASPath']) == shortestASPath]
+        return entryMatches
+        
     # takes in a subnet mask and converts it to CIDR representation
     def getNetmaskBits(self, netmask):
         # https://stackoverflow.com/questions/38085571/how-use-netaddr-to-convert-subnet-mask-to-cidr-in-python
@@ -145,34 +181,23 @@ class Router:
             return entryMatches[0]['peer']
 
         else:
-            # find the max Local Preference value in the entryMatches dict 
-            maxLocalPref = max([v['localpref'] for v in entryMatches])
-            # filter the list so it only contains entries with the max Local Preference value
-            entryMatches = [v for v in entryMatches if v['localpref'] == maxLocalPref]
-            # if there is a single entry, then it is the best match
+            entryMatches = self.breakTieLocalPref(entryMatches)
+            
             if len(entryMatches) == 1:
                 return entryMatches[0]['peer']
             
-            # filter the entryMatches dict so that it contains only entries which have selfOrigin set to true 
-            tempEntryMatches = [v for v in entryMatches if v['selfOrigin'] == True]
-            if len(tempEntryMatches) > 0:
-                entryMatches = tempEntryMatches
+            entryMatches = self.breakTieSelfOrigin(entryMatches)
+
             if len(entryMatches) == 1:
                 return entryMatches[0]['peer']
             
-            # find the length of the shortest ASPath in entryMatches
-            shortestASPath = min([len(v['ASPath']) for v in entryMatches])
-            # filter the list so it only contains entries with the shortest ASPath length
-            entryMatches = [v for v in entryMatches if len(v['ASPath']) == shortestASPath]
+            entryMatches = self.breakTieASPath(entryMatches)
+
             if len(entryMatches) == 1:
                 return entryMatches[0]['peer']
 
-            # give each possible origin a weight, so we can use built-in numeric functions to find the best origin
-            originWeights = {'IGP':2, 'EGP':1, 'UNK':0}
-            # find the best origin value in the list 
-            bestOriginWeight = max([originWeights[v['origin']] for v in entryMatches])
-            # filter the list so it only contains entries with highest origin weight
-            entryMatches = [v for v in entryMatches if originWeights[v['origin']] == bestOriginWeight]
+            entryMatches = self.breakTieOrigin(entryMatches)
+
             if len(entryMatches) == 1:
                 return entryMatches[0]['peer']
 
